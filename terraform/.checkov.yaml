@@ -1,0 +1,30 @@
+# Checkov skip list for the MiniStack local simulation.
+# These checks are intentionally not implemented because:
+#  - MiniStack does not support KMS, VPC flow logs, or DNSSEC
+#  - This is a local dev environment, not internet-exposed
+#  - Trivy handles image scanning in the pipeline (not ECR native scan)
+skip-check:
+  # ECR: KMS encryption + immutable tags not supported by MiniStack
+  - CKV_AWS_136   # ECR KMS encryption
+  - CKV_AWS_51    # ECR immutable tags (MUTABLE needed for local iteration)
+  - CKV_AWS_163   # ECR scan on push (Trivy handles this in CI)
+
+  # EKS: local simulation, cluster is not internet-facing
+  - CKV_AWS_38    # EKS public endpoint 0.0.0.0/0 (kind cluster, not real EKS)
+  - CKV_AWS_39    # EKS public endpoint disabled
+  - CKV_AWS_37    # EKS control plane logging (MiniStack doesn't support CloudWatch)
+  - CKV_AWS_58    # EKS secrets encryption (requires KMS)
+
+  # IAM: simplified policies for local environment
+  - CKV_AWS_355   # IAM wildcard resource (Route53 ListHostedZones requires *)
+  - CKV_AWS_274   # IAM wildcard action
+
+  # VPC/Networking: MiniStack limitations + intentional sim design
+  - CKV_AWS_130   # Public subnets assign public IPs (required for NAT gateway pattern)
+  - CKV2_AWS_12   # VPC default SG restriction (MiniStack doesn't model SGs fully)
+  - CKV2_AWS_11   # VPC flow logging (MiniStack doesn't support)
+
+  # Route53: local .local zone, not a real public zone
+  - CKV2_AWS_38   # DNSSEC signing (local .local zone)
+  - CKV2_AWS_39   # DNS query logging (MiniStack doesn't support)
+  - CKV2_AWS_23   # Route53 A records must have attached resource (127.0.0.1 is valid locally)

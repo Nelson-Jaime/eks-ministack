@@ -9,6 +9,7 @@ IMAGE        := localhost:4566/$(PROJECT)/fastapi-app
 export AWS_ACCESS_KEY_ID     := test
 export AWS_SECRET_ACCESS_KEY := test
 export AWS_DEFAULT_REGION    := $(AWS_REGION)
+export AWS_ENDPOINT_URL      := $(AWS_ENDPOINT)
 export DOCKER_HOST           := unix:///run/user/$(shell id -u)/docker.sock
 export KUBECONFIG            := $(HOME)/.kube/config-$(PROJECT)
 
@@ -26,7 +27,7 @@ tf-init:        ## Create S3 backend bucket in MiniStack + terraform init
 
 tf-validate:    ## terraform validate + checkov IaC scan
 	@cd terraform && terraform validate
-	@checkov -d terraform/ --framework terraform --quiet
+	@checkov -d terraform/ --framework terraform --config-file terraform/.checkov.yaml --quiet
 
 tf-plan: tf-validate  ## Terraform plan against MiniStack
 	@cd terraform && terraform plan -var="project_name=$(PROJECT)"
