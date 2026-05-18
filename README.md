@@ -344,3 +344,59 @@ make tf-init
 
 **Checkov fails with unexpected checks**
 Checkov skips are configured in `terraform/.checkov.yaml`. If a new check fires, add it there with a comment explaining why it's acceptable for a local simulation.
+
+**New Terraform module not found after adding it to `main.tf`**
+Adding a new module call always requires re-init before plan/apply:
+```bash
+make tf-init
+make tf-apply
+```
+
+---
+
+### Phase 2 — Docker Build + ECR Push
+
+**`docker: command not found` or `Cannot connect to Docker daemon`**
+The rootless Docker socket must be set. Either source `.env.local` or export manually:
+```bash
+export DOCKER_HOST=unix:///run/user/${UID}/docker.sock
+```
+
+**Build fails — `python3-venv` or pip not available inside container**
+This happens if the builder stage can't reach the internet. Check Docker's DNS:
+```bash
+docker run --rm python:3.12-slim pip install fastapi   # test connectivity
+```
+If it times out, restart the Docker daemon:
+```bash
+systemctl --user restart docker
+```
+
+**Trivy scan finds HIGH/CRITICAL CVEs**
+The build uses `--exit-code 0` so CVEs are reported but don't block the build. This is intentional for a local simulation. In production pipelines, set `--exit-code 1` to fail the build on CRITICAL findings.
+
+To see the full report without building:
+```bash
+make scan
+```
+
+**`docker login` to MiniStack ECR returns an error**
+MiniStack must be running and Docker must allow the insecure registry. Verify both:
+```bash
+# MiniStack running?
+curl -s http://localhost:4566/_ministack/health
+
+# Insecure registry configured?
+cat ~/.config/docker/daemon.json   # should contain "localhost:4566"
+```
+If the daemon.json was just updated, restart Docker:
+```bash
+systemctl --user restart docker
+```
+
+**`requested access to the resource is denied` when pushing**
+The ECR repository must exist in MiniStack before pushing. Make sure Phase 1 Terraform has been applied:
+```bash
+make tf-state   # should show both backend and frontend repos
+```
+If missing, run `make tf-apply` to create them.
