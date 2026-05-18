@@ -37,10 +37,16 @@ module "iam" {
   project_name = var.project_name
 }
 
-module "ecr" {
+module "ecr_backend" {
   source = "./modules/ecr"
 
-  repository_name = "${var.project_name}/fastapi-app"
+  repository_name = "${var.project_name}/backend"
+}
+
+module "ecr_frontend" {
+  source = "./modules/ecr"
+
+  repository_name = "${var.project_name}/frontend"
 }
 
 module "eks" {

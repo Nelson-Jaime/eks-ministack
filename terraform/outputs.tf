@@ -13,9 +13,14 @@ output "private_subnet_ids" {
   value       = module.vpc.private_subnet_ids
 }
 
-output "ecr_repository_url" {
-  description = "ECR repository URL (MiniStack)"
-  value       = module.ecr.repository_url
+output "ecr_backend_url" {
+  description = "ECR backend repository URL (MiniStack)"
+  value       = module.ecr_backend.repository_url
+}
+
+output "ecr_frontend_url" {
+  description = "ECR frontend repository URL (MiniStack)"
+  value       = module.ecr_frontend.repository_url
 }
 
 output "eks_cluster_name" {

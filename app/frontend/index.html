@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EKS MiniStack</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem;
+    }
+    header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    header h1 { font-size: 1.8rem; color: #63b3ed; }
+    header p  { color: #718096; margin-top: 0.4rem; font-size: 0.9rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1rem;
+      width: 100%;
+      max-width: 900px;
+    }
+    .card {
+      background: #1a202c;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      padding: 1.2rem;
+    }
+    .card h2 { font-size: 0.75rem; text-transform: uppercase; color: #718096; margin-bottom: 0.8rem; letter-spacing: 0.05em; }
+    .field { display: flex; justify-content: space-between; margin-bottom: 0.4rem; font-size: 0.9rem; }
+    .field span:first-child { color: #a0aec0; }
+    .field span:last-child  { color: #e2e8f0; font-family: monospace; }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.6rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge.ok      { background: #276749; color: #9ae6b4; }
+    .badge.error   { background: #742a2a; color: #fed7d7; }
+    .badge.loading { background: #2d3748; color: #a0aec0; }
+    button {
+      margin-top: 1.5rem;
+      padding: 0.5rem 1.2rem;
+      background: #3182ce;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button:hover { background: #2b6cb0; }
+    .ts { margin-top: 1.5rem; font-size: 0.75rem; color: #4a5568; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>EKS MiniStack</h1>
+    <p>End-to-End Kubernetes Platform — Local Simulation</p>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Backend Health</h2>
+      <div class="field">
+        <span>Status</span>
+        <span id="health-status"><span class="badge loading">checking…</span></span>
+      </div>
+      <div class="field">
+        <span>Version</span>
+        <span id="health-version">—</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Pod Info</h2>
+      <div class="field"><span>Pod</span><span id="info-pod">—</span></div>
+      <div class="field"><span>Node</span><span id="info-node">—</span></div>
+      <div class="field"><span>Namespace</span><span id="info-namespace">—</span></div>
+      <div class="field"><span>Zone</span><span id="info-zone">—</span></div>
+    </div>
+  </div>
+
+  <button onclick="fetchAll()">Refresh</button>
+  <p class="ts" id="timestamp"></p>
+
+  <script>
+    const BACKEND = "/api";
+
+    async function fetchHealth() {
+      try {
+        const r = await fetch(`${BACKEND}/health`);
+        const d = await r.json();
+        document.getElementById("health-status").innerHTML =
+          `<span class="badge ok">${d.status}</span>`;
+        document.getElementById("health-version").textContent = d.version;
+      } catch {
+        document.getElementById("health-status").innerHTML =
+          `<span class="badge error">unreachable</span>`;
+      }
+    }
+
+    async function fetchInfo() {
+      try {
+        const r = await fetch(`${BACKEND}/info`);
+        const d = await r.json();
+        document.getElementById("info-pod").textContent       = d.pod;
+        document.getElementById("info-node").textContent      = d.node;
+        document.getElementById("info-namespace").textContent = d.namespace;
+        document.getElementById("info-zone").textContent      = d.zone;
+      } catch {
+        ["info-pod","info-node","info-namespace","info-zone"]
+          .forEach(id => document.getElementById(id).textContent = "error");
+      }
+    }
+
+    function fetchAll() {
+      fetchHealth();
+      fetchInfo();
+      document.getElementById("timestamp").textContent =
+        "Last updated: " + new Date().toLocaleTimeString();
+    }
+
+    fetchAll();
+    setInterval(fetchAll, 10000);
+  </script>
+</body>
+</html>

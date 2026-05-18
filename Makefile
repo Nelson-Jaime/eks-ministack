@@ -4,7 +4,8 @@ APP_VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 
 AWS_ENDPOINT := http://localhost:4566
 AWS_REGION   := us-east-1
-IMAGE        := localhost:4566/$(PROJECT)/fastapi-app
+BACKEND_IMAGE  := localhost:4566/$(PROJECT)/backend
+FRONTEND_IMAGE := localhost:4566/$(PROJECT)/frontend
 
 export AWS_ACCESS_KEY_ID     := test
 export AWS_SECRET_ACCESS_KEY := test
@@ -39,13 +40,14 @@ tf-destroy:     ## Destroy all MiniStack resources
 	@cd terraform && terraform destroy -auto-approve -var="project_name=$(PROJECT)"
 
 ## ── Phase 2: Docker ──────────────────────────────────────────────────────
-build:          ## Build FastAPI Docker image + Trivy scan
+build:          ## Build backend + frontend Docker images + Trivy scan
 	@bash scripts/02-docker-build.sh $(APP_VERSION)
 
 scan:           ## Trivy scan only (no build)
-	@trivy image --severity HIGH,CRITICAL $(IMAGE):$(APP_VERSION)
+	@trivy image --severity HIGH,CRITICAL $(BACKEND_IMAGE):$(APP_VERSION)
+	@trivy image --severity HIGH,CRITICAL $(FRONTEND_IMAGE):$(APP_VERSION)
 
-push:           ## Login + push image to MiniStack ECR
+push:           ## Login + push both images to MiniStack ECR
 	@bash scripts/03-ecr-push.sh $(APP_VERSION)
 
 ## ── Phase 3: kind cluster ────────────────────────────────────────────────
@@ -85,7 +87,7 @@ tf-state:       ## Show MiniStack resources via AWS CLI
 	  aws eks list-clusters --endpoint-url $(AWS_ENDPOINT) --region $(AWS_REGION)
 
 clean: cluster-delete tf-destroy  ## Delete kind cluster + destroy MiniStack resources
-	@docker rmi $(IMAGE):latest 2>/dev/null || true
+	@docker rmi $(BACKEND_IMAGE):latest $(FRONTEND_IMAGE):latest 2>/dev/null || true
 
 all: install-tools tf-apply build push cluster-create load-image helm-bootstrap argocd-bootstrap verify
 	@echo "Full pipeline complete!"
