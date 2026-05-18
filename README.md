@@ -286,3 +286,61 @@ curl -H "Host: app.eks-ministack.local" http://localhost:8080/health
 kubectl port-forward svc/prometheus-operated 9090:9090 -n monitoring &
 curl "http://localhost:9090/api/v1/query?query=http_requests_total" | grep fastapi
 ```
+
+---
+
+## Troubleshooting
+
+### Phase 0 — Install Tools
+
+**`sudo: A terminal is required to authenticate`**
+`make install-tools` runs non-interactively, so sudo prompts fail after the session expires. Run the sysctl step manually in your terminal:
+```bash
+sudo tee /etc/sysctl.d/99-kind.conf > /dev/null <<'EOF'
+fs.inotify.max_user_watches = 524288
+fs.inotify.max_user_instances = 512
+EOF
+sudo sysctl --system
+```
+
+**`python3 -m venv` fails — `ensurepip not available`**
+Python venv support is a separate package on Ubuntu:
+```bash
+sudo apt-get install -y python3-venv
+```
+
+**Tool not found after install**
+`~/.local/bin` may not be on your PATH. Add to `~/.zshrc` or `~/.bashrc`:
+```bash
+export PATH="${HOME}/.local/bin:${PATH}"
+```
+Then `source ~/.zshrc` and re-run the failed command.
+
+---
+
+### Phase 1 — Terraform
+
+**`MiniStack is not running at http://localhost:4566`**
+The container stopped. Restart it:
+```bash
+DOCKER_HOST=unix:///run/user/${UID}/docker.sock docker ps -a   # find the container name
+DOCKER_HOST=unix:///run/user/${UID}/docker.sock docker start <container-name>
+```
+
+**`InvalidClientTokenId` / STS auth failure during `terraform init`**
+Terraform tried to reach the real AWS instead of MiniStack. `AWS_ENDPOINT_URL` was not exported. The Makefile sets it, but if you run `terraform` directly from the `terraform/` directory, set it manually:
+```bash
+export AWS_ACCESS_KEY_ID=test
+export AWS_SECRET_ACCESS_KEY=test
+export AWS_ENDPOINT_URL=http://localhost:4566
+terraform init
+```
+
+**`Backend initialization required` after editing `backend.tf`**
+Any change to `backend.tf` requires re-init:
+```bash
+make tf-init
+```
+
+**Checkov fails with unexpected checks**
+Checkov skips are configured in `terraform/.checkov.yaml`. If a new check fires, add it there with a comment explaining why it's acceptable for a local simulation.
