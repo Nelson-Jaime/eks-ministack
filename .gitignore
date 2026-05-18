@@ -1,0 +1,28 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+*.tfvars.local
+override.tf
+override.tf.json
+
+# Secrets / local config
+.env.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Kubernetes
+*.kubeconfig
+kubeconfig-*
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
