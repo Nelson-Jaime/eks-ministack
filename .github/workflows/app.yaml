@@ -49,7 +49,7 @@ jobs:
           hadolint app/frontend/Dockerfile
 
       - name: Install yamllint
-        run: command -v yamllint &>/dev/null || pip3 install --user --quiet yamllint
+        run: command -v yamllint &>/dev/null || sudo apt-get install -y -qq yamllint
 
       - name: Lint app/k8s manifests
         run: |
