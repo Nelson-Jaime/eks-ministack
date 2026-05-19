@@ -1,0 +1,106 @@
+name: App CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/**"
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOCKER_HOST: unix:///run/user/1000/docker.sock
+  KUBECONFIG: /home/nelson/.kube/config-eks-ministack
+  PROJECT: eks-ministack
+  BACKEND_IMAGE: localhost:4566/eks-ministack/backend
+  FRONTEND_IMAGE: localhost:4566/eks-ministack/frontend
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_ENDPOINT_URL: http://localhost:4566
+
+jobs:
+
+  # ── Validate: runs on every PR and every push to main ─────────────────────
+  validate:
+    name: Validate
+    runs-on: [self-hosted, linux, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install hadolint (ARM64)
+        run: |
+          if ! command -v hadolint &>/dev/null; then
+            curl -fsSL \
+              "https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-arm64" \
+              -o "${HOME}/.local/bin/hadolint"
+            chmod +x "${HOME}/.local/bin/hadolint"
+          fi
+
+      - name: Lint Dockerfiles
+        run: |
+          hadolint app/backend/Dockerfile
+          hadolint app/frontend/Dockerfile
+
+      - name: Install yamllint
+        run: command -v yamllint &>/dev/null || pip3 install --user --quiet yamllint
+
+      - name: Lint app/k8s manifests
+        run: |
+          yamllint \
+            --config-data '{
+              extends: default,
+              rules: {
+                line-length: {max: 160, level: warning},
+                truthy: {allowed-values: ["true","false"], check-keys: false}
+              }
+            }' \
+            app/k8s/
+
+  # ── Build: runs on every PR and every push to main ────────────────────────
+  build:
+    name: Build + Scan
+    runs-on: [self-hosted, linux, arm64]
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker images + Trivy scan
+        # Tags both :$SHA and :latest — pods use :latest (imagePullPolicy: Never)
+        run: make build APP_VERSION=${{ github.sha }}
+
+  # ── Deploy: push to main only (i.e. after PR is approved and merged) ──────
+  deploy:
+    name: Deploy
+    runs-on: [self-hosted, linux, arm64]
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push images to MiniStack ECR
+        run: make push APP_VERSION=${{ github.sha }}
+
+      - name: Load images into kind nodes
+        # kind load is what actually makes imagePullPolicy: Never work
+        run: |
+          kind load docker-image ${BACKEND_IMAGE}:latest  --name ${PROJECT}
+          kind load docker-image ${FRONTEND_IMAGE}:latest --name ${PROJECT}
+
+      - name: Rolling restart
+        # Restart (not a manifest commit) so ArgoCD selfHeal loop is not triggered
+        run: kubectl rollout restart deployment/backend deployment/frontend -n apps
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/backend  -n apps --timeout=120s
+          kubectl rollout status deployment/frontend -n apps --timeout=120s
+
+      - name: Verify
+        run: make verify

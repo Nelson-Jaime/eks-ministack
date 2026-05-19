@@ -289,6 +289,87 @@ curl "http://localhost:9090/api/v1/query?query=http_requests_total" | grep fasta
 
 ---
 
+## CI/CD Pipelines
+
+Two separate GitHub Actions workflows, both requiring the Pi registered as a self-hosted runner.
+
+### Workflows
+
+| Workflow | File | Triggers on | Jobs |
+|----------|------|------------|------|
+| **App** | `.github/workflows/app.yaml` | changes to `app/**` | validate → build → deploy* |
+| **Infra** | `.github/workflows/infra.yaml` | changes to `terraform/**` `helm/**` `k8s/**` `kind-config.yaml` | validate → apply* |
+
+*Deploy / apply run only on **push to `main`** (i.e. after a PR is approved and merged). PRs get validate + build only.
+
+### App pipeline jobs
+
+| Job | Runs on | What it does |
+|-----|---------|-------------|
+| `validate` | PRs + main | hadolint (Dockerfiles), yamllint (`app/k8s/`) |
+| `build` | PRs + main | `make build APP_VERSION=$SHA` — Docker build + Trivy scan |
+| `deploy` | main only | push to ECR, `kind load` into cluster, `kubectl rollout restart`, `make verify` |
+
+### Infra pipeline jobs
+
+| Job | Runs on | What it does |
+|-----|---------|-------------|
+| `validate` | PRs + main | `terraform fmt`, `terraform validate`, Checkov, yamllint (`helm/` `k8s/`) |
+| `apply` | main only | `make tf-apply` — Terraform apply against MiniStack. Helm/K8s changes are picked up automatically by ArgoCD within ~3 min. |
+
+### Registering the self-hosted runner
+
+The Pi must be registered as a runner because GitHub-hosted runners can't reach MiniStack (`localhost:4566`) or the kind cluster.
+
+**One-time setup:**
+
+1. Get a registration token from:
+   ```
+   https://github.com/Nelson-Jaime/eks-ministack/settings/actions/runners/new
+   ```
+
+2. Run the setup script:
+   ```bash
+   export RUNNER_TOKEN=<token-from-github>
+   bash scripts/setup-runner.sh
+   ```
+
+   The script downloads the ARM64 runner binary, registers it with labels `self-hosted,linux,arm64`, and installs it as a systemd user service that survives reboots.
+
+3. Verify it's online:
+   ```bash
+   systemctl --user status github-runner
+   # → Active: active (running)
+   ```
+   The runner also appears as **Online** at `https://github.com/Nelson-Jaime/eks-ministack/settings/actions/runners`.
+
+**Runner management:**
+```bash
+systemctl --user restart github-runner       # restart
+journalctl --user -u github-runner -f        # tail logs
+systemctl --user disable --now github-runner # stop + unregister service
+```
+
+### Full setup pipeline (local)
+
+`scripts/pipeline.sh` wraps all 8 phases with progress banners, per-phase timing, and a `--from` option to resume after a failure.
+
+```bash
+# Run all phases from scratch
+bash scripts/pipeline.sh
+
+# Restart from a specific phase (after a failure)
+bash scripts/pipeline.sh --from helm
+
+# Preview what would run without executing
+bash scripts/pipeline.sh --dry-run
+bash scripts/pipeline.sh --dry-run --from cluster
+```
+
+Available phase names: `tools` `terraform` `docker` `cluster` `helm` `argocd` `verify`
+
+---
+
 ## Troubleshooting
 
 ### Phase 0 — Install Tools
