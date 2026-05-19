@@ -8,9 +8,10 @@ env:
     value: test
   - name: AWS_REGION
     value: us-east-1
+  - name: AWS_ENDPOINT_URL
+    value: http://172.18.0.1:4566
 
 extraArgs:
-  - --aws-api-endpoint=http://172.18.0.1:4566
   - --txt-owner-id=eks-ministack
   - --domain-filter=eks-ministack.local
 
