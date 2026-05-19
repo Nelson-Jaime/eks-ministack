@@ -1,0 +1,25 @@
+controller:
+  hostPort:
+    enabled: true
+    ports:
+      http: 80
+      https: 443
+
+  service:
+    type: NodePort
+
+  nodeSelector:
+    ingress-ready: "true"
+
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+
+  admissionWebhooks:
+    enabled: false
+
+  updateStrategy:
+    type: Recreate
+
+  watchIngressWithoutClass: true

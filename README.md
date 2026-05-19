@@ -474,3 +474,109 @@ make tf-apply       # re-provision MiniStack
 make build push     # rebuild and re-push images
 make cluster-create # fresh cluster
 ```
+
+---
+
+### Phase 4 — Helm Bootstrap
+
+**`helm repo add` fails — network unreachable**
+The Pi must be able to reach the chart index URLs. Test connectivity:
+```bash
+curl -s https://kubernetes.github.io/ingress-nginx/index.yaml | head -5
+curl -s https://charts.jetstack.io/index.yaml | head -5
+curl -s https://argoproj.github.io/argo-helm/index.yaml | head -5
+```
+If these time out, check DNS and routing. Once connectivity is restored, `--force-update` makes `helm repo add` idempotent — re-run `make helm-bootstrap` safely.
+
+**NGINX Ingress pod stays `Pending`**
+The pod uses `nodeSelector: ingress-ready: "true"` and will not schedule until that label exists. The script applies it, but if something failed before that step:
+```bash
+kubectl label node eks-ministack-control-plane ingress-ready=true --overwrite
+kubectl get pods -n ingress-nginx -o wide   # should move to Running
+```
+
+**NGINX Ingress pod runs but `curl http://localhost:8080` refuses connection**
+The pod must run on the control-plane node (the only node with `extraPortMappings`). Check:
+```bash
+kubectl get pods -n ingress-nginx -o wide   # NODE column must be eks-ministack-control-plane
+```
+If it landed on a worker, the nodeSelector is wrong or the `ingress-ready` label is on the wrong node. Fix:
+```bash
+kubectl get nodes --show-labels | grep ingress-ready   # confirm which node has it
+kubectl label node <wrong-node> ingress-ready-          # remove from wrong node
+kubectl label node eks-ministack-control-plane ingress-ready=true --overwrite
+kubectl rollout restart deployment/ingress-nginx-controller -n ingress-nginx
+```
+
+**cert-manager webhook `--timeout` during `helm install`**
+The webhook pod can take a moment to become ready. If `helm install` times out before it's up:
+```bash
+kubectl get pods -n cert-manager
+kubectl describe pod -n cert-manager -l app.kubernetes.io/component=webhook | tail -20
+```
+Usually a transient image pull. Re-run `make helm-bootstrap` — `helm upgrade --install` is idempotent.
+
+**`installCRDs` deprecation warning from cert-manager**
+The values file now uses `crds.enabled: true` (the correct key for cert-manager v1.15+). If you see the warning on an existing install, upgrade the release:
+```bash
+helm upgrade cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --values helm/cert-manager-values.yaml \
+  --reuse-values
+```
+
+**ArgoCD `helm install` times out at 5 minutes**
+ArgoCD has 6 components (server, application-controller, applicationset-controller, dex, notifications, repo-server). On a Pi with limited memory, they can be slow to pull. Check:
+```bash
+kubectl get pods -n argocd
+kubectl describe pod -n argocd -l app.kubernetes.io/name=argocd-server | tail -20
+```
+If pods are `Pending` due to resource pressure:
+```bash
+kubectl top nodes   # check memory
+kubectl get pods -A | grep -v Running   # find what's consuming resources
+```
+Re-run `make helm-bootstrap` once resources free up.
+
+**`deployment/argo-cd-argocd-server` not found during `rollout status`**
+The deployment name is derived from the Helm release name (`argo-cd`) + chart component (`argocd-server`) = `argo-cd-argocd-server`. If you installed with a different release name, the name will differ:
+```bash
+kubectl get deployments -n argocd   # find the actual deployment name
+```
+
+**ArgoCD UI shows a TLS redirect / HTTPS error on `localhost:9090`**
+`server.insecure: true` must be active. Verify it's in the ArgoCD config:
+```bash
+kubectl get configmap argocd-cmd-params-cm -n argocd -o yaml | grep insecure
+```
+If missing, re-apply the Helm values:
+```bash
+helm upgrade argo-cd argo/argo-cd \
+  --namespace argocd \
+  --values helm/argocd-values.yaml \
+  --reuse-values
+kubectl rollout restart deployment/argo-cd-argocd-server -n argocd
+```
+
+**`argocd-initial-admin-secret` never appears**
+The secret is created by the ArgoCD server job shortly after the server pod is ready. If it's still missing after 2 minutes:
+```bash
+kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-server --tail=30
+```
+A crash or OOMKill in the server pod will prevent secret creation. Check events:
+```bash
+kubectl get events -n argocd --sort-by=.lastTimestamp | tail -10
+```
+
+**ArgoCD `Ingress` resources stuck in `Progressing`**
+Without the custom Ingress health check, ArgoCD waits for `status.loadBalancer.ingress` which NodePort never populates. Verify the override is active:
+```bash
+kubectl get configmap argocd-cm -n argocd -o yaml | grep "networking.k8s.io_Ingress"
+```
+If the key is missing, the `configs.cm` block in `helm/argocd-values.yaml` wasn't applied. Re-run:
+```bash
+helm upgrade argo-cd argo/argo-cd \
+  --namespace argocd \
+  --values helm/argocd-values.yaml
+```

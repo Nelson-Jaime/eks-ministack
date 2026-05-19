@@ -1,0 +1,17 @@
+configs:
+  params:
+    server.insecure: true
+
+  cm:
+    resource.customizations.health.networking.k8s.io_Ingress: |
+      hs = {}
+      hs.status = "Healthy"
+      hs.message = "Ingress is healthy"
+      return hs
+
+server:
+  service:
+    type: NodePort
+    nodePorts:
+      http: 30080
+      https: 30443
