@@ -84,6 +84,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Terraform init
+        working-directory: terraform
+        run: terraform init -reconfigure
+        env:
+          TF_PLUGIN_CACHE_DIR: /home/nelson/.terraform.d/plugin-cache
+
       - name: Terraform apply
         # helm/ and k8s/ changes don't need an explicit step here —
         # ArgoCD (selfHeal: true) picks them up automatically within ~3 minutes of push
