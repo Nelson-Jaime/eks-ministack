@@ -400,3 +400,77 @@ The ECR repository must exist in MiniStack before pushing. Make sure Phase 1 Ter
 make tf-state   # should show both backend and frontend repos
 ```
 If missing, run `make tf-apply` to create them.
+
+---
+
+### Phase 3 — kind Cluster
+
+**`sudo: A terminal is required to authenticate` during iptables switch**
+The script tries to switch `iptables` to legacy mode but can't prompt for a password in a non-TTY context. The script warns and continues — `iptables-nft` works fine with kind v0.31.0 on this system. If you later see inter-pod routing failures, switch manually in a terminal:
+```bash
+sudo update-alternatives --set iptables /usr/sbin/iptables-legacy
+sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+```
+Then recreate the cluster: `make clean && make cluster-create`
+
+**`kind create cluster` hangs at "Preparing nodes"**
+Two common causes on rootless Docker ARM64:
+
+1. `DOCKER_HOST` not set — kind can't find the Docker socket:
+   ```bash
+   export DOCKER_HOST=unix:///run/user/${UID}/docker.sock
+   make cluster-create
+   ```
+2. `passt` not installed — rootless Docker needs it for container networking:
+   ```bash
+   sudo apt-get install -y passt
+   systemctl --user restart docker
+   make cluster-create
+   ```
+
+**`kind create cluster` hangs at "Starting control-plane"**
+Usually an inotify limit issue when the monitoring stack is preloaded. Apply the kernel tuning and recreate:
+```bash
+sudo tee /etc/sysctl.d/99-kind.conf > /dev/null <<'EOF'
+fs.inotify.max_user_watches = 524288
+fs.inotify.max_user_instances = 512
+EOF
+sudo sysctl --system
+make clean && make cluster-create
+```
+
+**`kubectl wait` times out — nodes never reach Ready**
+Check node status and CNI logs:
+```bash
+kubectl get nodes
+kubectl describe node eks-ministack-worker | tail -20
+kubectl get pods -n kube-system   # look for CrashLoopBackOff in kindnet/coredns
+```
+A CNI crash is usually the iptables issue above. Switch to legacy and recreate.
+
+**`kind load docker-image` fails — image not found**
+The image must exist locally before loading. Verify:
+```bash
+DOCKER_HOST=unix:///run/user/${UID}/docker.sock docker images | grep eks-ministack
+```
+If missing, rebuild first: `make build`
+
+**AZ labels not appearing on nodes**
+Confirm kind v0.17.0+ is installed (the `labels:` node field is unavailable in older versions):
+```bash
+kind version   # must be v0.17.0 or later
+kubectl get nodes --show-labels | grep topology
+```
+If labels are missing despite a correct `kind-config.yaml`, delete and recreate the cluster — labels are only applied at node join time:
+```bash
+make clean && make cluster-create
+```
+
+**Cluster already exists error when re-running `make cluster-create`**
+The script is idempotent — it skips creation if the cluster exists. If you need a clean rebuild:
+```bash
+make clean          # deletes cluster + destroys MiniStack resources
+make tf-apply       # re-provision MiniStack
+make build push     # rebuild and re-push images
+make cluster-create # fresh cluster
+```
