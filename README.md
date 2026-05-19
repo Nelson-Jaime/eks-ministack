@@ -580,3 +580,115 @@ helm upgrade argo-cd argo/argo-cd \
   --namespace argocd \
   --values helm/argocd-values.yaml
 ```
+
+---
+
+### Phase 5 — ArgoCD GitOps Bootstrap
+
+**ArgoCD can't reach the GitHub repo — apps stay `Unknown` or `ComparisonError`**
+ArgoCD pulls from `github.com` on every sync. Verify connectivity from inside the cluster:
+```bash
+kubectl run -it --rm curl --image=curlimages/curl --restart=Never -- \
+  curl -sf https://github.com -o /dev/null -w "%{http_code}"
+# Expected: 200
+```
+If it times out, the Pi's network or DNS is blocking egress. ArgoCD cannot sync without a reachable Git remote.
+
+**`apps` Application is Synced but no child apps appear**
+The App-of-Apps watches `k8s/apps/`. If that directory was empty when ArgoCD first synced, child apps won't exist. Push the files first, then refresh:
+```bash
+git push origin main
+kubectl annotate application apps -n argocd argocd.argoproj.io/refresh=normal
+```
+
+**ExternalDNS crash-loops with `unknown long flag '--aws-api-endpoint'`**
+The `--aws-api-endpoint` flag was removed in external-dns v0.15+. Use the `AWS_ENDPOINT_URL` environment variable instead — this is already correct in `helm/external-dns-values.yaml`. If you see this on a fresh install, the old values were cached:
+```bash
+kubectl annotate application external-dns -n argocd argocd.argoproj.io/refresh=normal
+```
+ArgoCD will re-sync and pick up the env-var-based config.
+
+**ExternalDNS running but Route53 records not updating**
+Verify ExternalDNS can reach MiniStack at `172.18.0.1:4566`:
+```bash
+kubectl exec -n external-dns deployment/external-dns -- \
+  wget -qO- http://172.18.0.1:4566/_ministack/health | head -1
+```
+If unreachable, the Docker bridge IP may have changed (e.g., after a Docker daemon restart). Find the current gateway:
+```bash
+DOCKER_HOST=unix:///run/user/${UID}/docker.sock \
+  docker exec eks-ministack-worker ip route show default
+# e.g. default via 172.18.0.1 dev eth0
+```
+Update `helm/external-dns-values.yaml` with the correct IP, commit, push, and ArgoCD will self-heal.
+
+**`monitoring` app shows `Degraded` — Prometheus or Grafana pods stuck**
+kube-prometheus-stack creates many resources including CRDs. The `ServerSideApply=true` sync option handles large CRD payloads. If Prometheus pods are in `Pending`:
+```bash
+kubectl get pods -n monitoring
+kubectl describe pod -n monitoring -l app.kubernetes.io/name=prometheus | tail -20
+```
+Resource pressure is the most common cause on the Pi (8 Prometheus components + app pods):
+```bash
+kubectl top nodes   # check memory headroom
+```
+If Grafana stays in `ContainerCreating`, it may be waiting for the init container to pull:
+```bash
+kubectl get events -n monitoring --sort-by=.lastTimestamp | tail -10
+```
+
+**`fastapi-app` pods are `Pending` — topology spread can't be satisfied**
+The backend uses `topologySpreadConstraints` with `whenUnsatisfiable: DoNotSchedule`. This requires at least one worker in each AZ. If the cluster was recreated without AZ labels:
+```bash
+kubectl get nodes --show-labels | grep topology   # must show 4 workers with zone labels
+```
+If labels are missing, re-apply them (no cluster recreation needed):
+```bash
+kubectl label node eks-ministack-worker  topology.kubernetes.io/zone=us-east-1a --overwrite
+kubectl label node eks-ministack-worker2 topology.kubernetes.io/zone=us-east-1a --overwrite
+kubectl label node eks-ministack-worker3 topology.kubernetes.io/zone=us-east-1b --overwrite
+kubectl label node eks-ministack-worker4 topology.kubernetes.io/zone=us-east-1b --overwrite
+```
+
+**`app /api/` returns 502 Bad Gateway**
+The frontend nginx proxies `/api/` to `http://backend:8000/`. The backend Service must be named `backend` in the same namespace (`apps`). Check:
+```bash
+kubectl get svc -n apps                    # should show: backend (ClusterIP :8000)
+kubectl get endpoints -n apps backend      # should show pod IPs
+```
+If the service exists but endpoints are empty, the backend pods aren't Ready:
+```bash
+kubectl get pods -n apps -l app=backend
+kubectl describe pod -n apps -l app=backend | tail -20
+```
+
+**HPA shows `<unknown>/70%` for CPU — metrics-server not ready**
+HPA requires metrics-server to be running and serving data. It can take ~60s after startup:
+```bash
+kubectl get pods -n kube-system -l k8s-app=metrics-server
+kubectl top pods -n apps   # should show CPU/memory for backend pods
+```
+If metrics-server pods are Running but `kubectl top` fails with `ServiceUnavailable`:
+```bash
+kubectl logs -n kube-system deployment/metrics-server --tail=20
+```
+The most common cause in kind is missing `--kubelet-insecure-tls`. Verify the patch was applied:
+```bash
+kubectl get deployment metrics-server -n kube-system \
+  -o jsonpath='{.spec.template.spec.containers[0].args}' | tr ',' '\n' | grep insecure
+# Expected: --kubelet-insecure-tls
+```
+If missing, re-apply:
+```bash
+kubectl patch deployment metrics-server -n kube-system \
+  --type=json \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+```
+
+**ArgoCD sync wait times out in `06-argocd-bootstrap.sh`**
+The script polls every 15s for up to 15 minutes. If it times out, check which apps are not Synced:
+```bash
+kubectl get applications -n argocd
+kubectl get application <name> -n argocd -o yaml | grep -A5 "conditions:"
+```
+Common causes: GitHub unreachable, chart index unreachable (network), or a resource failing validation. The ArgoCD UI at `http://localhost:9090` shows the full sync error with diff view.
