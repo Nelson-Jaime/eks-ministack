@@ -692,3 +692,29 @@ kubectl get applications -n argocd
 kubectl get application <name> -n argocd -o yaml | grep -A5 "conditions:"
 ```
 Common causes: GitHub unreachable, chart index unreachable (network), or a resource failing validation. The ArgoCD UI at `http://localhost:9090` shows the full sync error with diff view.
+
+**Browser shows "Server Not Found" or "can't connect" for `app.eks-ministack.local`**
+Two things must be true before the URL works in a browser:
+
+1. **`/etc/hosts` entry** — the `.local` domain won't resolve without it:
+   ```bash
+   echo "127.0.0.1  app.eks-ministack.local argocd.eks-ministack.local grafana.eks-ministack.local" \
+     | sudo tee -a /etc/hosts
+   ```
+
+2. **Port 8080, not 80** — rootless Docker can't bind to port 80 (requires root), so kind's `extraPortMappings` lands on 8080. Browse to:
+   ```
+   http://app.eks-ministack.local:8080/
+   http://grafana.eks-ministack.local:8080/
+   ```
+
+**To drop the `:8080` and use bare port 80 in the browser**
+Add a local NAT redirect (not persistent across reboots):
+```bash
+sudo iptables -t nat -A OUTPUT -p tcp -d 127.0.0.1 --dport 80 -j REDIRECT --to-port 8080
+```
+To make it permanent, add it to `/etc/rc.local` before the `exit 0` line:
+```bash
+echo 'iptables -t nat -A OUTPUT -p tcp -d 127.0.0.1 --dport 80 -j REDIRECT --to-port 8080' \
+  | sudo tee -a /etc/rc.local
+```
